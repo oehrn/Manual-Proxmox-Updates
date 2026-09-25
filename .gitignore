@@ -1,0 +1,24 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.local
+secrets/
+*.key
+*.pem
+*.p12
+targets.conf
+
+# Runtime data, exports and backups
+data/
+backups/
+*.sql
+*.dump
+
+# Logs and editor files
+*.log
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
