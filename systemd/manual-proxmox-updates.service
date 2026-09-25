@@ -1,0 +1,13 @@
+[Unit]
+Description=Manually triggered Proxmox OS updates
+Documentation=man:systemd.service(5)
+ConditionPathExists=/etc/manual-proxmox-updates/targets.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/manual-proxmox-updates --apply
+TimeoutStartSec=4h
+StandardOutput=journal
+StandardError=journal
+
+# Deliberately no [Install] section and no timer.
