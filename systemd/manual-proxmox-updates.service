@@ -1,0 +1,12 @@
+[Unit]
+Description=Manually triggered Proxmox LXC updates
+Documentation=man:systemd.service(5)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/manual-proxmox-updates --apply
+TimeoutStartSec=8h
+StandardOutput=journal
+StandardError=journal
+
+# Deliberately no [Install] section and no timer.

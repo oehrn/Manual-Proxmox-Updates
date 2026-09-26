@@ -1,0 +1,16 @@
+# Manually call script.manual_proxmox_updates from a dashboard button.
+# The authorized key on the Proxmox host must force only the systemd start command.
+shell_command:
+  manual_proxmox_updates_start: >-
+    ssh -i /config/.ssh/manual_proxmox_updates_ed25519
+    -o BatchMode=yes
+    -o ConnectTimeout=5
+    -o StrictHostKeyChecking=yes
+    -o UserKnownHostsFile=/config/.ssh/known_hosts
+    root@proxmox-node.example.invalid true
+
+script:
+  manual_proxmox_updates:
+    alias: "Start LXC updates"
+    sequence:
+      - action: shell_command.manual_proxmox_updates_start
