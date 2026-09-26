@@ -7,7 +7,7 @@ secrets/
 *.key
 *.pem
 *.p12
-targets.conf
+targets.json
 
 # Runtime data, exports and backups
 data/

@@ -1,0 +1,4 @@
+{
+  "expected_host": "proxmox-node",
+  "containers": [101, 102]
+}

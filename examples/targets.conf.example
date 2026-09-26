@@ -1,4 +1,0 @@
-# Copy as /etc/manual-proxmox-updates/targets.conf with root ownership.
-EXPECTED_HOST=proxmox-node
-UPDATE_HOST=0
-CT_IDS=""
