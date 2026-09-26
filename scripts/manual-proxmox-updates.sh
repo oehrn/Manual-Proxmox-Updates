@@ -83,75 +83,49 @@ network_enabled() {
 
 planned=()
 for id in "${targets[@]}"; do
-  config=$(pct config "$id") || die "Cannot read CT $id configuration."
   status=$(pct status "$id") || die "Cannot read CT $id status."
   [[ $status == 'status: running' || $status == 'status: stopped' ]] || die "Unexpected CT $id status: $status"
+  # A stopped LXC is never started by this runner.
+  if [[ $status == 'status: stopped' ]]; then
+    log "SKIP CT $id: stopped; it will remain stopped."
+    continue
+  fi
+  config=$(pct config "$id") || die "Cannot read CT $id configuration."
   if ! network_enabled "$config"; then
-    log "SKIP CT $id: no enabled network interface ($status)."
+    log "SKIP CT $id: no enabled network interface."
     continue
   fi
   grep -Eq '^ostype: (debian|ubuntu)$' <<< "$config" || die "CT $id is not configured as Debian or Ubuntu."
   planned+=("$id")
-  if [[ $status == 'status: stopped' ]]; then
-    log "PLAN CT $id: start, update, shut down."
-  else
-    log "PLAN CT $id: update while running."
-  fi
+  log "PLAN CT $id: update while running."
 done
-(( ${#planned[@]} > 0 )) || die 'No eligible LXCs.'
+if (( ${#planned[@]} == 0 )); then
+  log 'No eligible LXCs; nothing to update.'
+  exit 0
+fi
 [[ $mode == --apply ]] || exit 0
 
 exec 9>"$LOCK"
 flock -n 9 || die 'Another update run is active.'
 
-started_by_us=
-on_exit() {
-  local result=$?
-  trap - EXIT
-  if [[ -n $started_by_us ]]; then
-    log "Shutting down CT $started_by_us after interrupted or failed run."
-    if ! pct shutdown "$started_by_us" --timeout 120 || [[ $(pct status "$started_by_us") != 'status: stopped' ]]; then
-      log "ERROR: CT $started_by_us could not be shut down; manual attention required."
-      result=1
-    fi
-  fi
-  exit "$result"
-}
-trap on_exit EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
 failures=0
 for id in "${planned[@]}"; do
-  # Recheck the exclusion and initial state immediately before changing anything.
+  # Recheck state and network immediately before the update.
+  status=$(pct status "$id") || die "Cannot read CT $id status."
+  if [[ $status == 'status: stopped' ]]; then
+    log "SKIP CT $id: it was stopped after planning."
+    continue
+  fi
+  [[ $status == 'status: running' ]] || die "Unexpected CT $id status: $status"
   config=$(pct config "$id") || die "Cannot read CT $id configuration."
   if ! network_enabled "$config"; then
     log "SKIP CT $id: network interface was disabled after planning."
     continue
   fi
-  status=$(pct status "$id") || die "Cannot read CT $id status."
-  if [[ $status == 'status: stopped' ]]; then
-    log "Starting CT $id for its update."
-    if ! pct start "$id"; then
-      [[ $(pct status "$id") != 'status: running' ]] || started_by_us=$id
-      die "Could not start CT $id."
-    fi
-    started_by_us=$id
-  elif [[ $status != 'status: running' ]]; then
-    die "Unexpected CT $id status: $status"
-  fi
 
   log "Updating CT $id."
-  apt_ready=0
-  for attempt in {1..12}; do
-    if pct exec "$id" -- test -x /usr/bin/apt-get >/dev/null 2>&1; then
-      apt_ready=1
-      break
-    fi
-    sleep 5
-  done
-  if (( apt_ready == 0 )); then
-    log "ERROR: CT $id did not expose apt-get within 60 seconds."
+  if ! pct exec "$id" -- test -x /usr/bin/apt-get; then
+    log "ERROR: CT $id does not have apt-get."
     failures=$((failures + 1))
   elif ! pct exec "$id" -- apt-get -o DPkg::Lock::Timeout=60 update; then
     log "ERROR: CT $id package index update failed."
@@ -167,13 +141,6 @@ for id in "${planned[@]}"; do
     fi
   fi
 
-  if [[ $started_by_us == "$id" ]]; then
-    log "Returning CT $id to its stopped state."
-    if ! pct shutdown "$id" --timeout 120 || [[ $(pct status "$id") != 'status: stopped' ]]; then
-      die "CT $id could not be shut down; manual attention required."
-    fi
-    started_by_us=
-  fi
 done
 
 (( failures == 0 )) || die "$failures LXC update(s) failed."

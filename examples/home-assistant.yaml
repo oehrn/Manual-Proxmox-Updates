@@ -11,6 +11,6 @@ shell_command:
 
 script:
   manual_proxmox_updates:
-    alias: "Start Proxmox OS updates"
+    alias: "Start LXC updates"
     sequence:
       - action: shell_command.manual_proxmox_updates_start

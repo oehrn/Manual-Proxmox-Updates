@@ -6,7 +6,6 @@ Documentation=man:systemd.service(5)
 Type=oneshot
 ExecStart=/usr/local/sbin/manual-proxmox-updates --apply
 TimeoutStartSec=8h
-TimeoutStopSec=180s
 StandardOutput=journal
 StandardError=journal
 
