@@ -4,12 +4,13 @@ A manually triggered update runner for the Debian and Ubuntu containers on one P
 
 ## Behavior
 
-- The root-owned JSON lists every LXC ID on the host. The runner refuses to start if the host inventory and JSON differ.
+- The runner discovers current LXCs with `pct list`; deleted or newly added LXCs do not require a JSON inventory edit.
+- The root-owned JSON contains only the host name and `start_stopped`, an explicit list of stopped LXC IDs approved for a temporary start. An empty list starts none.
 - A container is skipped when it has no configured network interface or every interface has `link_down=1`. Disconnecting a network interface is an operator decision and may affect the container's service.
-- Stopped containers are skipped and remain stopped. Running containers stay running.
+- Running Debian/Ubuntu LXCs are updated and stay running. Stopped LXCs outside `start_stopped` stay stopped. Approved stopped LXCs are started, updated, and shut down afterward, including when an update fails. If shutdown cannot be confirmed, the runner reports an error and requires operator attention; it never force-stops a container.
 - Updates are sequential: `apt-get update`, then `apt-get upgrade -y`. Failures are logged, and remaining containers are still attempted unless an inventory error makes it unsafe to continue.
 - Package upgrades may restart services inside an LXC; choose a maintenance window.
-- There is no timer, cron job, distribution upgrade, VM or host update, container start, shutdown, or reboot.
+- There is no timer, cron job, distribution upgrade, VM or host update, or automatic reboot.
 
 ## Prerequisites
 
@@ -19,11 +20,13 @@ A manually triggered update runner for the Debian and Ubuntu containers on one P
 
 ## Installation and first review
 
-Review the scripts before installing. On the intended Proxmox host, install `scripts/manual-proxmox-updates.sh` as `/usr/local/sbin/manual-proxmox-updates` and `systemd/manual-proxmox-updates.service` as `/etc/systemd/system/manual-proxmox-updates.service`. Copy `examples/targets.json.example` to `/etc/manual-proxmox-updates/targets.json`, set the real host name, and list **every** LXC ID on that host. Keep this real JSON out of the public repository. Set root ownership and mode `0600`, then run `systemctl daemon-reload`.
+Review the scripts before installing. On the intended Proxmox host, install `scripts/manual-proxmox-updates.sh` as `/usr/local/sbin/manual-proxmox-updates` and `systemd/manual-proxmox-updates.service` as `/etc/systemd/system/manual-proxmox-updates.service`. Copy `examples/targets.json.example` to `/etc/manual-proxmox-updates/targets.json`, set the real host name, and list only stopped LXCs that may be temporarily started. Keep this real JSON out of the public repository. Set root ownership and mode `0600`, then run `systemctl daemon-reload`.
 
 Run `/usr/local/sbin/manual-proxmox-updates --plan` first. It is read-only and shows which LXCs would be skipped or updated. Recheck the plan after changing any network settings. Disabling a network interface can interrupt a service, so make that choice separately. Check backup freshness and choose a maintenance window before starting an update.
 
 For a manual first run, use `systemctl start manual-proxmox-updates.service`. Inspect `systemctl status manual-proxmox-updates.service` and `journalctl -u manual-proxmox-updates.service -n 50 --no-pager` afterward. The service invokes `--apply`; the operator performs practical testing.
+
+When upgrading from the full-inventory format, install the new runner and the new JSON together. The old `containers` key is not accepted by the new runner. Keep the previous runner and JSON as a rollback pair, and check `--plan` before using the Home Assistant button again.
 
 ## Home Assistant trigger
 

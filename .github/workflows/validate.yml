@@ -1,0 +1,14 @@
+name: Validate updater
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax and isolated behavior
+        run: |
+          bash -n scripts/manual-proxmox-updates.sh
+          python3 -m json.tool examples/targets.json.example >/dev/null
+          python3 -m unittest discover -s tests -v
