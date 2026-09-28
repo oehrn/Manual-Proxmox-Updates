@@ -3,9 +3,17 @@ set -Eeuo pipefail
 
 # Run on the Proxmox host. Home Assistant only starts the systemd service.
 CONFIG=/etc/manual-proxmox-updates/targets.json
+MAIL_CONFIG=/etc/manual-proxmox-updates/mail.conf
+SENDMAIL_PATH=/usr/sbin/sendmail
 LOCK=/run/manual-proxmox-updates.lock
+RUN_ID=$(date +%Y%m%dT%H%M%S%z)
+issues=()
 
-log() { printf '%s %s\n' "$(date -Is)" "$*"; }
+log() {
+  printf '%s %s\n' "$(date -Is)" "$*"
+  [[ $1 == ERROR:* ]] && issues+=("$*")
+  return 0
+}
 die() { log "ERROR: $*" >&2; exit 1; }
 
 mode=${1:-}
@@ -91,6 +99,15 @@ if (( ${#planned[@]} == 0 )); then
 fi
 [[ $mode == --apply ]] || exit 0
 
+[[ -f $MAIL_CONFIG && ! -L $MAIL_CONFIG ]] || die 'Mail configuration is missing or a symlink.'
+[[ $(stat -c %u "$MAIL_CONFIG") == 0 ]] || die 'Mail configuration must be owned by root.'
+mail_mode=$(stat -c %a "$MAIL_CONFIG")
+(( (8#$mail_mode & 8#077) == 0 )) || die 'Mail configuration must not be accessible by group or others.'
+# This trusted, root-owned file contains only MAIL_TO.
+# shellcheck source=/dev/null
+source "$MAIL_CONFIG"
+[[ ${MAIL_TO:-} == *@* && $MAIL_TO != *$'\n'* && $MAIL_TO != *$'\r'* ]] || die 'MAIL_TO is missing or invalid.'
+
 exec 9>"$LOCK"
 flock -n 9 || die 'Another update run is active.'
 
@@ -128,9 +145,31 @@ check_container_health() {
   fi
   log "CHECK CT $id: running; no failed systemd services."
 }
+send_failure_email() {
+  {
+    printf 'To: %s\n' "$MAIL_TO"
+    printf 'Subject: [N5 LXC Updates] FAILED %s\n' "$RUN_ID"
+    printf 'MIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\n\n'
+    printf 'N5 LXC update failed. Run: %s. Exit status: %s.\n\n' "$RUN_ID" "$1"
+    if (( ${#issues[@]} > 0 )); then
+      printf 'Errors:\n'
+      printf '%s\n' "${issues[@]}"
+    else
+      printf 'No detailed error was captured.\n'
+    fi
+    printf '\nFull log on N5: journalctl -u manual-proxmox-updates.service -n 100 --no-pager\n'
+  } | timeout 30 "$SENDMAIL_PATH" -t -oi
+}
 on_exit() {
   local result=$?
   shutdown_started || result=1
+  if (( result != 0 )); then
+    if send_failure_email "$result"; then
+      log 'Failure email submitted to local mail transport.'
+    else
+      log 'ERROR: Failure email could not be submitted; inspect the journal.'
+    fi
+  fi
   exit "$result"
 }
 trap on_exit EXIT
