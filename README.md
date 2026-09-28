@@ -10,6 +10,7 @@ A manually triggered update runner for the Debian and Ubuntu containers on one P
 - Running Debian/Ubuntu LXCs with a connected network device are updated and stay running. Stopped eligible LXCs are started, updated, and shut down afterward, including when an update fails. If shutdown cannot be confirmed, the runner reports an error and requires operator attention; it never force-stops a container.
 - Updates are sequential: `apt-get update`, then `apt-get upgrade -y`. Failures are logged, and remaining containers are still attempted unless an inventory error makes it unsafe to continue.
 - After each update attempt, the runner checks that the LXC is running and asks systemd for failed services. A failed service or unavailable check marks that LXC as failed. This is a brief technical check, not an application-level availability test; it also reports failures that existed before the update.
+- Only a failed `--apply` run submits an email through the host's local `sendmail` transport. A successful run sends no email. The message lists recorded errors and points to the full systemd journal; mail delivery depends on the host's mail transport.
 - Package upgrades may restart services inside an LXC; choose a maintenance window.
 - There is no timer, cron job, distribution upgrade, VM or host update, or automatic reboot.
 
@@ -21,7 +22,7 @@ A manually triggered update runner for the Debian and Ubuntu containers on one P
 
 ## Installation and first review
 
-Review the scripts before installing. On the intended Proxmox host, install `scripts/manual-proxmox-updates.sh` as `/usr/local/sbin/manual-proxmox-updates` and `systemd/manual-proxmox-updates.service` as `/etc/systemd/system/manual-proxmox-updates.service`. Copy `examples/targets.json.example` to `/etc/manual-proxmox-updates/targets.json` and set the real host name. Keep this real JSON out of the public repository. Set root ownership and mode `0600`, then run `systemctl daemon-reload`.
+Review the scripts before installing. On the intended Proxmox host, install `scripts/manual-proxmox-updates.sh` as `/usr/local/sbin/manual-proxmox-updates` and `systemd/manual-proxmox-updates.service` as `/etc/systemd/system/manual-proxmox-updates.service`. Copy `examples/targets.json.example` to `/etc/manual-proxmox-updates/targets.json` and set the real host name. For failure-only mail, copy `examples/mail.conf.example` to `/etc/manual-proxmox-updates/mail.conf` and set `MAIL_TO` to the intended recipient. Keep the real configuration files out of the public repository. Set root ownership and mode `0600` for both files, then run `systemctl daemon-reload`. The host needs a configured `/usr/sbin/sendmail` transport.
 
 Run `/usr/local/sbin/manual-proxmox-updates --plan` first. It is read-only and shows which LXCs would be skipped or updated. Recheck the plan after changing any network settings. Disabling a network interface can interrupt a service, so make that choice separately. Check backup freshness and choose a maintenance window before starting an update.
 

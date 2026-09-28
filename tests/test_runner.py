@@ -17,12 +17,21 @@ class RunnerTest(unittest.TestCase):
             root = Path(directory)
             config = root / "targets.json"
             config.write_text(json.dumps({"expected_host": "n5"}))
+            mail_config = root / "mail.conf"
+            mail_config.write_text('MAIL_TO=operator@example.test\n')
+            mail_config.chmod(0o600)
+            mail = root / "mail.txt"
             script = root / "runner.sh"
             script.write_text(
                 RUNNER.read_text()
                 .replace("CONFIG=/etc/manual-proxmox-updates/targets.json", f"CONFIG={config}")
+                .replace("MAIL_CONFIG=/etc/manual-proxmox-updates/mail.conf", f"MAIL_CONFIG={mail_config}")
+                .replace("SENDMAIL_PATH=/usr/sbin/sendmail", f"SENDMAIL_PATH={root / 'sendmail'}")
                 .replace("LOCK=/run/manual-proxmox-updates.lock", f"LOCK={root / 'lock'}")
             )
+            sendmail = root / "sendmail"
+            sendmail.write_text('#!/bin/sh\ncat > "$FAKE_MAIL"\n')
+            sendmail.chmod(0o755)
             state = root / "state.json"
             state.write_text(json.dumps({"110": "running", "198": "stopped", "201": "stopped", "261": "stopped"}))
             calls = root / "calls.txt"
@@ -33,6 +42,7 @@ class RunnerTest(unittest.TestCase):
                 "hostname": 'echo n5',
                 "stat": 'case "$2" in %u) echo 0;; %a) echo 600;; esac',
                 "flock": 'exit 0',
+                "timeout": 'shift; exec "$@"',
             }.items():
                 path = fakebin / name
                 path.write_text(f"#!/bin/sh\n{body}\n")
@@ -67,6 +77,7 @@ class RunnerTest(unittest.TestCase):
                 "FAKE_CALLS": str(calls),
                 "FAIL_UPDATE": "1" if fail_update else "0",
                 "FAILED_SERVICE": "1" if failed_service else "0",
+                "FAKE_MAIL": str(mail),
             }
             result = subprocess.run(
                 ["bash", str(script), mode],
@@ -75,10 +86,10 @@ class RunnerTest(unittest.TestCase):
                 env=environment,
                 check=False,
             )
-            return result, json.loads(state.read_text()), calls.read_text() if calls.exists() else ""
+            return result, json.loads(state.read_text()), calls.read_text() if calls.exists() else "", mail.read_text() if mail.exists() else ""
 
     def test_plan_includes_stopped_containers(self):
-        result, state, calls = self.run_case("--plan")
+        result, state, calls, mail = self.run_case("--plan")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("PLAN CT 110", result.stdout)
         self.assertIn("PLAN CT 198: start, update, then shut down", result.stdout)
@@ -86,9 +97,10 @@ class RunnerTest(unittest.TestCase):
         self.assertIn("SKIP CT 261: no enabled network interface", result.stdout)
         self.assertEqual(state["198"], "stopped")
         self.assertEqual(calls, "")
+        self.assertEqual(mail, "")
 
     def test_stopped_containers_are_shut_down_after_update(self):
-        result, state, calls = self.run_case("--apply")
+        result, state, calls, mail = self.run_case("--apply")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("start 198", calls)
         self.assertIn("shutdown 198 --timeout 120", calls)
@@ -99,20 +111,24 @@ class RunnerTest(unittest.TestCase):
         self.assertNotIn("shutdown 110", calls)
         self.assertEqual(state["198"], "stopped")
         self.assertEqual(state["201"], "stopped")
+        self.assertEqual(mail, "")
 
     def test_update_failure_still_shuts_down_started_container(self):
-        result, state, calls = self.run_case("--apply", fail_update=True)
+        result, state, calls, mail = self.run_case("--apply", fail_update=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("package index update failed", result.stdout)
         self.assertIn("shutdown 198 --timeout 120", calls)
         self.assertEqual(state["198"], "stopped")
+        self.assertIn("[N5 LXC Updates] FAILED", mail)
+        self.assertIn("CT 198 package index update failed", mail)
 
     def test_failed_service_is_reported_and_started_container_is_shut_down(self):
-        result, state, calls = self.run_case("--apply", failed_service=True)
+        result, state, calls, mail = self.run_case("--apply", failed_service=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("CT 198 has failed service example.service", result.stdout)
         self.assertIn("shutdown 198 --timeout 120", calls)
         self.assertEqual(state["198"], "stopped")
+        self.assertIn("CT 198 has failed service example.service", mail)
 
 
 if __name__ == "__main__":
