@@ -16,8 +16,8 @@ mode=${1:-}
 file_mode=$(stat -c %a "$CONFIG")
 (( (8#$file_mode & 8#022) == 0 )) || die 'Target JSON must not be writable by group or others.'
 
-# Validate JSON and emit only a hostname and approved stopped CT IDs.
-config_lines=$(python3 - "$CONFIG" <<'PY'
+# Validate JSON and emit the expected hostname.
+expected_host=$(python3 - "$CONFIG" <<'PY'
 import json
 import re
 import sys
@@ -33,55 +33,27 @@ def unique_pairs(pairs):
 try:
     with open(sys.argv[1], encoding="utf-8") as stream:
         config = json.load(stream, object_pairs_hook=unique_pairs)
-    if not isinstance(config, dict) or set(config) != {"expected_host", "start_stopped"}:
-        raise ValueError("expected exactly 'expected_host' and 'start_stopped'")
+    if not isinstance(config, dict) or set(config) != {"expected_host"}:
+        raise ValueError("expected exactly 'expected_host'")
     host = config["expected_host"]
-    ids = config["start_stopped"]
     if not isinstance(host, str) or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9.-]*", host):
         raise ValueError("invalid expected_host")
-    if not isinstance(ids, list):
-        raise ValueError("start_stopped must be a list")
-    if any(type(item) is not int or not 100 <= item <= 999999999 for item in ids):
-        raise ValueError("container IDs must be integers between 100 and 999999999")
-    if len(ids) != len(set(ids)):
-        raise ValueError("duplicate container ID")
 except (OSError, ValueError) as error:
     print(f"Invalid target JSON: {error}", file=sys.stderr)
     sys.exit(1)
 
 print(host)
-for item in ids:
-    print(item)
 PY
 ) || die 'Target JSON validation failed.'
-config_items=()
-while IFS= read -r item; do config_items+=("$item"); done <<< "$config_lines"
-expected_host=${config_items[0]}
-start_stopped=("${config_items[@]:1}")
 [[ $(hostname -s) == "$expected_host" ]] || die 'Unexpected Proxmox host.'
 
 # Discover current LXCs rather than maintaining a full copy of the host inventory.
-contains_id() {
-  local wanted=$1 item
-  shift
-  for item in "$@"; do [[ $item == "$wanted" ]] && return 0; done
-  return 1
-}
-approved_for_start() {
-  (( ${#start_stopped[@]} > 0 )) || return 1
-  contains_id "$1" "${start_stopped[@]}"
-}
 targets=()
 while read -r id _; do
   [[ $id =~ ^[0-9]+$ ]] || continue
   targets+=("$id")
 done < <(pct list)
 (( ${#targets[@]} > 0 )) || die 'No LXCs discovered on this host.'
-if (( ${#start_stopped[@]} > 0 )); then
-  for id in "${start_stopped[@]}"; do
-    contains_id "$id" "${targets[@]}" || log "SKIP CT $id: approved for stopped updates but no longer on this host."
-  done
-fi
 
 network_enabled() {
   local line
@@ -104,10 +76,6 @@ for id in "${targets[@]}"; do
   fi
   if ! grep -Eq '^ostype: (debian|ubuntu)$' <<< "$config"; then
     log "SKIP CT $id: not configured as Debian or Ubuntu."
-    continue
-  fi
-  if [[ $status == 'status: stopped' ]] && ! approved_for_start "$id"; then
-    log "SKIP CT $id: stopped and not approved for temporary start."
     continue
   fi
   planned+=("$id")
@@ -165,10 +133,6 @@ for id in "${planned[@]}"; do
     continue
   fi
   if [[ $status == 'status: stopped' ]]; then
-    if ! approved_for_start "$id"; then
-      log "SKIP CT $id: stopped and not approved for temporary start."
-      continue
-    fi
     log "Starting CT $id for update."
     if ! pct start "$id"; then
       log "ERROR: CT $id could not be started; operator check required."
