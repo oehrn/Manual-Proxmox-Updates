@@ -12,7 +12,7 @@ RUNNER = Path(__file__).resolve().parents[1] / "scripts/manual-proxmox-updates.s
 
 
 class RunnerTest(unittest.TestCase):
-    def run_case(self, mode, fail_update=False):
+    def run_case(self, mode, fail_update=False, failed_service=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config = root / "targets.json"
@@ -57,6 +57,7 @@ class RunnerTest(unittest.TestCase):
                 "    if op == 'shutdown': state[args[0]] = 'stopped'\n"
                 "    state_path.write_text(json.dumps(state))\n"
                 "    if op == 'exec' and args[-1] == '/var/run/reboot-required': sys.exit(1)\n"
+                "    if op == 'exec' and '--failed' in args and args[0] == '198' and os.environ.get('FAILED_SERVICE') == '1': print('example.service loaded failed failed Example')\n"
                 "    if op == 'exec' and 'update' in args and os.environ.get('FAIL_UPDATE') == '1' and args[0] == '198': sys.exit(1)\n"
             )
             pct.chmod(0o755)
@@ -65,6 +66,7 @@ class RunnerTest(unittest.TestCase):
                 "FAKE_STATE": str(state),
                 "FAKE_CALLS": str(calls),
                 "FAIL_UPDATE": "1" if fail_update else "0",
+                "FAILED_SERVICE": "1" if failed_service else "0",
             }
             result = subprocess.run(
                 ["bash", str(script), mode],
@@ -92,6 +94,7 @@ class RunnerTest(unittest.TestCase):
         self.assertIn("shutdown 198 --timeout 120", calls)
         self.assertIn("start 201", calls)
         self.assertIn("shutdown 201 --timeout 120", calls)
+        self.assertIn("exec 198 -- systemctl --failed --type=service --no-legend --plain --no-pager", calls)
         self.assertNotIn("start 261", calls)
         self.assertNotIn("shutdown 110", calls)
         self.assertEqual(state["198"], "stopped")
@@ -101,6 +104,13 @@ class RunnerTest(unittest.TestCase):
         result, state, calls = self.run_case("--apply", fail_update=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("package index update failed", result.stdout)
+        self.assertIn("shutdown 198 --timeout 120", calls)
+        self.assertEqual(state["198"], "stopped")
+
+    def test_failed_service_is_reported_and_started_container_is_shut_down(self):
+        result, state, calls = self.run_case("--apply", failed_service=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("CT 198 has failed service example.service", result.stdout)
         self.assertIn("shutdown 198 --timeout 120", calls)
         self.assertEqual(state["198"], "stopped")
 

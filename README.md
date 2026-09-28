@@ -9,6 +9,7 @@ A manually triggered update runner for the Debian and Ubuntu containers on one P
 - A container is skipped when it has no configured network interface or every interface has `link_down=1`, the Proxmox network device's **Disconnect** setting. Disconnecting a network interface is an operator decision and may affect the container's service.
 - Running Debian/Ubuntu LXCs with a connected network device are updated and stay running. Stopped eligible LXCs are started, updated, and shut down afterward, including when an update fails. If shutdown cannot be confirmed, the runner reports an error and requires operator attention; it never force-stops a container.
 - Updates are sequential: `apt-get update`, then `apt-get upgrade -y`. Failures are logged, and remaining containers are still attempted unless an inventory error makes it unsafe to continue.
+- After each update attempt, the runner checks that the LXC is running and asks systemd for failed services. A failed service or unavailable check marks that LXC as failed. This is a brief technical check, not an application-level availability test; it also reports failures that existed before the update.
 - Package upgrades may restart services inside an LXC; choose a maintenance window.
 - There is no timer, cron job, distribution upgrade, VM or host update, or automatic reboot.
 

@@ -109,6 +109,25 @@ shutdown_started() {
   started_id=
   return 1
 }
+check_container_health() {
+  local id=$1 status failed_units unit remainder
+  status=$(pct status "$id") || { log "ERROR: Cannot read CT $id status after update."; return 1; }
+  if [[ $status != 'status: running' ]]; then
+    log "ERROR: CT $id is not running after update ($status)."
+    return 1
+  fi
+  if ! failed_units=$(pct exec "$id" -- systemctl --failed --type=service --no-legend --plain --no-pager); then
+    log "ERROR: Could not check failed systemd services in CT $id."
+    return 1
+  fi
+  if [[ -n $failed_units ]]; then
+    while read -r unit remainder; do
+      [[ -n $unit ]] && log "ERROR: CT $id has failed service $unit."
+    done <<< "$failed_units"
+    return 1
+  fi
+  log "CHECK CT $id: running; no failed systemd services."
+}
 on_exit() {
   local result=$?
   shutdown_started || result=1
@@ -161,6 +180,7 @@ for id in "${planned[@]}"; do
       log "REBOOT REQUIRED: CT $id; operator decides when."
     fi
   fi
+  check_container_health "$id" || failures=$((failures + 1))
   if [[ -n $started_id ]]; then
     shutdown_started || failures=$((failures + 1))
   fi
