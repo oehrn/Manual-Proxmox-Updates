@@ -12,11 +12,11 @@ RUNNER = Path(__file__).resolve().parents[1] / "scripts/manual-proxmox-updates.s
 
 
 class RunnerTest(unittest.TestCase):
-    def run_case(self, mode, start_stopped, fail_update=False):
+    def run_case(self, mode, fail_update=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config = root / "targets.json"
-            config.write_text(json.dumps({"expected_host": "n5", "start_stopped": start_stopped}))
+            config.write_text(json.dumps({"expected_host": "n5"}))
             script = root / "runner.sh"
             script.write_text(
                 RUNNER.read_text()
@@ -24,7 +24,7 @@ class RunnerTest(unittest.TestCase):
                 .replace("LOCK=/run/manual-proxmox-updates.lock", f"LOCK={root / 'lock'}")
             )
             state = root / "state.json"
-            state.write_text(json.dumps({"110": "running", "198": "stopped", "201": "stopped"}))
+            state.write_text(json.dumps({"110": "running", "198": "stopped", "201": "stopped", "261": "stopped"}))
             calls = root / "calls.txt"
             fakebin = root / "bin"
             fakebin.mkdir()
@@ -50,7 +50,7 @@ class RunnerTest(unittest.TestCase):
                 "    print('VMID Status Lock Name')\n"
                 "    for ct, status in state.items(): print(ct, status, '', 'test')\n"
                 "elif op == 'status': print('status:', state[args[0]])\n"
-                "elif op == 'config': print('ostype: debian\\nnet0: name=eth0,bridge=vmbr0')\n"
+                "elif op == 'config': print('ostype: debian\\nnet0: name=eth0,bridge=vmbr0' + (',link_down=1' if args[0] == '261' else ''))\n"
                 "else:\n"
                 "    with calls.open('a') as log: log.write(op + ' ' + ' '.join(args) + '\\n')\n"
                 "    if op == 'start': state[args[0]] = 'running'\n"
@@ -75,32 +75,30 @@ class RunnerTest(unittest.TestCase):
             )
             return result, json.loads(state.read_text()), calls.read_text() if calls.exists() else ""
 
-    def test_discovery_skips_unapproved_stopped_containers(self):
-        result, state, calls = self.run_case("--plan", [])
+    def test_plan_includes_stopped_containers(self):
+        result, state, calls = self.run_case("--plan")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("PLAN CT 110", result.stdout)
-        self.assertIn("SKIP CT 198", result.stdout)
+        self.assertIn("PLAN CT 198: start, update, then shut down", result.stdout)
+        self.assertIn("PLAN CT 201: start, update, then shut down", result.stdout)
+        self.assertIn("SKIP CT 261: no enabled network interface", result.stdout)
         self.assertEqual(state["198"], "stopped")
         self.assertEqual(calls, "")
 
-    def test_removed_stopped_approval_does_not_block_other_updates(self):
-        result, _, calls = self.run_case("--plan", [210])
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("SKIP CT 210: approved for stopped updates but no longer on this host", result.stdout)
-        self.assertIn("PLAN CT 110", result.stdout)
-        self.assertEqual(calls, "")
-
-    def test_approved_stopped_container_is_shut_down_after_update(self):
-        result, state, calls = self.run_case("--apply", [198])
+    def test_stopped_containers_are_shut_down_after_update(self):
+        result, state, calls = self.run_case("--apply")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("start 198", calls)
         self.assertIn("shutdown 198 --timeout 120", calls)
+        self.assertIn("start 201", calls)
+        self.assertIn("shutdown 201 --timeout 120", calls)
+        self.assertNotIn("start 261", calls)
         self.assertNotIn("shutdown 110", calls)
         self.assertEqual(state["198"], "stopped")
         self.assertEqual(state["201"], "stopped")
 
     def test_update_failure_still_shuts_down_started_container(self):
-        result, state, calls = self.run_case("--apply", [198], fail_update=True)
+        result, state, calls = self.run_case("--apply", fail_update=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("package index update failed", result.stdout)
         self.assertIn("shutdown 198 --timeout 120", calls)

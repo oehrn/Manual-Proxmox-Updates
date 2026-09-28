@@ -1,4 +1,3 @@
 {
-  "expected_host": "proxmox-node",
-  "start_stopped": []
+  "expected_host": "proxmox-node"
 }
