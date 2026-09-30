@@ -51,3 +51,16 @@ Never commit the real target JSON, SSH keys, host fingerprints, logs, or infrast
 ## License
 
 No license has been selected yet.
+
+## Failure email sender
+
+Optionally add `MAIL_FROM` and `MAIL_FROM_NAME` to the existing private mail configuration:
+
+```bash
+MAIL_FROM=error-PVE-N5@mtrolle.com
+MAIL_FROM_NAME="N5 PVE Error"
+```
+
+Keep `MAIL_TO` unchanged. The runner uses the address for both the visible From header and the envelope sender (`sendmail -f`). The display name is quoted in the From header. If the optional settings are absent, the existing local mail defaults remain in use. Sender addresses must contain only letters, digits, dot, underscore, percent, plus and hyphen before `@`, and letters, digits, dot and hyphen after it. Display names cannot contain newlines, carriage returns, quotes or backslashes.
+
+The operator must verify delivery and the received From header through their configured Postfix/SMTP relay. A successful local submission does not establish external delivery. No real update failure should be induced solely to test email delivery. Back up the installed runner and private mail configuration before installation; restore both to roll back.

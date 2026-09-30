@@ -103,10 +103,19 @@ fi
 [[ $(stat -c %u "$MAIL_CONFIG") == 0 ]] || die 'Mail configuration must be owned by root.'
 mail_mode=$(stat -c %a "$MAIL_CONFIG")
 (( (8#$mail_mode & 8#077) == 0 )) || die 'Mail configuration must not be accessible by group or others.'
-# This trusted, root-owned file contains only MAIL_TO.
+# This trusted, root-owned file contains mail recipient and optional sender settings.
 # shellcheck source=/dev/null
 source "$MAIL_CONFIG"
 [[ ${MAIL_TO:-} == *@* && $MAIL_TO != *$'\n'* && $MAIL_TO != *$'\r'* ]] || die 'MAIL_TO is missing or invalid.'
+
+# Optional settings preserve existing installations until the operator opts in.
+MAIL_FROM=${MAIL_FROM:-}
+MAIL_FROM_NAME=${MAIL_FROM_NAME:-}
+[[ -z $MAIL_FROM || $MAIL_FROM =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]] || die 'MAIL_FROM is invalid.'
+[[ $MAIL_FROM_NAME != *$'\n'* && $MAIL_FROM_NAME != *$'\r'* && $MAIL_FROM_NAME != *'"'* && $MAIL_FROM_NAME != *'\'* ]] || die 'MAIL_FROM_NAME is invalid.'
+[[ -z $MAIL_FROM_NAME || -n $MAIL_FROM ]] || die 'MAIL_FROM_NAME requires MAIL_FROM.'
+mail_sender_args=()
+[[ -z $MAIL_FROM ]] || mail_sender_args=(-f "$MAIL_FROM")
 
 exec 9>"$LOCK"
 flock -n 9 || die 'Another update run is active.'
@@ -148,6 +157,11 @@ check_container_health() {
 send_failure_email() {
   {
     printf 'To: %s\n' "$MAIL_TO"
+    if [[ -n $MAIL_FROM_NAME ]]; then
+      printf 'From: "%s" <%s>\n' "$MAIL_FROM_NAME" "$MAIL_FROM"
+    elif [[ -n $MAIL_FROM ]]; then
+      printf 'From: %s\n' "$MAIL_FROM"
+    fi
     printf 'Subject: [N5 LXC Updates] FAILED %s\n' "$RUN_ID"
     printf 'MIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\n\n'
     printf 'N5 LXC update failed. Run: %s. Exit status: %s.\n\n' "$RUN_ID" "$1"
@@ -158,7 +172,7 @@ send_failure_email() {
       printf 'No detailed error was captured.\n'
     fi
     printf '\nFull log on N5: journalctl -u manual-proxmox-updates.service -n 100 --no-pager\n'
-  } | timeout 30 "$SENDMAIL_PATH" -t -oi
+  } | timeout 30 "$SENDMAIL_PATH" "${mail_sender_args[@]}" -t -oi
 }
 on_exit() {
   local result=$?
