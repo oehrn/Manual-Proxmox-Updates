@@ -1,6 +1,6 @@
-# Manual Proxmox LXC Updates
+# Manual Proxmox LXC and Host Updates
 
-A manually triggered update runner for the Debian and Ubuntu containers on one Proxmox VE host. Home Assistant can start it; systemd owns the long-running process. VMs and the Proxmox host itself are outside this runner.
+A manually triggered update runner for a Proxmox VE host followed by its Debian and Ubuntu containers. Home Assistant can start it; systemd owns the long-running process. VM guest operating systems are outside this runner.
 
 ## Behavior
 
@@ -10,9 +10,10 @@ A manually triggered update runner for the Debian and Ubuntu containers on one P
 - Running Debian/Ubuntu LXCs with a connected network device are updated and stay running. Stopped eligible LXCs are started, updated, and shut down afterward, including when an update fails. If shutdown cannot be confirmed, the runner reports an error and requires operator attention; it never force-stops a container.
 - Updates are sequential: `apt-get update`, then `apt-get upgrade -y`. Failures are logged, and remaining containers are still attempted unless an inventory error makes it unsafe to continue.
 - After each update attempt, the runner checks that the LXC is running and asks systemd for failed services. A failed service or unavailable check marks that LXC as failed. This is a brief technical check, not an application-level availability test; it also reports failures that existed before the update.
+- The host updates first with `apt-get update` and `apt-get upgrade -y`. Failed systemd services, inactive core Proxmox services, an apt error, or `/var/run/reboot-required` stop the run before any LXC update and trigger the failure email. It never reboots automatically. A new kernel is not active until a separately approved reboot.
 - Only a failed `--apply` run submits an email through the host's local `sendmail` transport. A successful run sends no email. The message lists recorded errors and points to the full systemd journal; mail delivery depends on the host's mail transport.
 - Package upgrades may restart services inside an LXC; choose a maintenance window.
-- There is no timer, cron job, distribution upgrade, VM or host update, or automatic reboot.
+- There is no timer, cron job, distribution upgrade, VM guest update, or automatic reboot.
 
 ## Prerequisites
 
@@ -24,7 +25,7 @@ A manually triggered update runner for the Debian and Ubuntu containers on one P
 
 Review the scripts before installing. On the intended Proxmox host, install `scripts/manual-proxmox-updates.sh` as `/usr/local/sbin/manual-proxmox-updates` and `systemd/manual-proxmox-updates.service` as `/etc/systemd/system/manual-proxmox-updates.service`. Copy `examples/targets.json.example` to `/etc/manual-proxmox-updates/targets.json` and set the real host name. For failure-only mail, copy `examples/mail.conf.example` to `/etc/manual-proxmox-updates/mail.conf` and set `MAIL_TO` to the intended recipient. Keep the real configuration files out of the public repository. Set root ownership and mode `0600` for both files, then run `systemctl daemon-reload`. The host needs a configured `/usr/sbin/sendmail` transport.
 
-Run `/usr/local/sbin/manual-proxmox-updates --plan` first. It is read-only and shows which LXCs would be skipped or updated. Recheck the plan after changing any network settings. Disabling a network interface can interrupt a service, so make that choice separately. Check backup freshness and choose a maintenance window before starting an update.
+Run `/usr/local/sbin/manual-proxmox-updates --plan` first. It is read-only and shows which LXCs would be skipped or updated and that the host precedes them. Recheck the plan after changing any network settings. Disabling a network interface can interrupt a service, so make that choice separately. Check backup freshness and choose a maintenance window before starting an update. The runner does not create a backup.
 
 For a manual first run, use `systemctl start manual-proxmox-updates.service`. Inspect `systemctl status manual-proxmox-updates.service` and `journalctl -u manual-proxmox-updates.service -n 50 --no-pager` afterward. The service invokes `--apply`; the operator performs practical testing.
 
@@ -64,3 +65,7 @@ MAIL_FROM_NAME="N5 PVE Error"
 Keep `MAIL_TO` unchanged. The runner uses the address for both the visible From header and the envelope sender (`sendmail -f`). The display name is quoted in the From header. If the optional settings are absent, the existing local mail defaults remain in use. Sender addresses must contain only letters, digits, dot, underscore, percent, plus and hyphen before `@`, and letters, digits, dot and hyphen after it. Display names cannot contain newlines, carriage returns, quotes or backslashes.
 
 The operator must verify delivery and the received From header through their configured Postfix/SMTP relay. A successful local submission does not establish external delivery. No real update failure should be induced solely to test email delivery. Back up the installed runner and private mail configuration before installation; restore both to roll back.
+
+## Validation
+
+The existing GitHub Actions workflow runs syntax checks and isolated runner tests on Ubuntu with GNU Bash and coreutils. All Proxmox, package-update and mail commands are mocked. The macOS system Bash 3.2 is not a supported test runtime; the production runner targets Proxmox Linux. Tests verify host-before-container ordering, host failure/reboot gates, container cleanup, failure-only mail, sender headers/envelopes, legacy sender defaults and rejection of header injection. Practical updates and relay delivery remain operator tests.

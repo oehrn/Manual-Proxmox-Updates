@@ -93,10 +93,8 @@ for id in "${targets[@]}"; do
     log "PLAN CT $id: update while running."
   fi
 done
-if (( ${#planned[@]} == 0 )); then
-  log 'No eligible LXCs; nothing to update.'
-  exit 0
-fi
+(( ${#planned[@]} > 0 )) || log 'No eligible LXCs; host update remains planned.'
+log "PLAN host $(hostname -s): update before eligible LXCs; no automatic reboot."
 [[ $mode == --apply ]] || exit 0
 
 [[ -f $MAIL_CONFIG && ! -L $MAIL_CONFIG ]] || die 'Mail configuration is missing or a symlink.'
@@ -162,16 +160,16 @@ send_failure_email() {
     elif [[ -n $MAIL_FROM ]]; then
       printf 'From: %s\n' "$MAIL_FROM"
     fi
-    printf 'Subject: [N5 LXC Updates] FAILED %s\n' "$RUN_ID"
+    printf 'Subject: [Proxmox Updates] FAILED %s\n' "$RUN_ID"
     printf 'MIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\n\n'
-    printf 'N5 LXC update failed. Run: %s. Exit status: %s.\n\n' "$RUN_ID" "$1"
+    printf 'Proxmox update failed on %s. Run: %s. Exit status: %s.\n\n' "$(hostname -s)" "$RUN_ID" "$1"
     if (( ${#issues[@]} > 0 )); then
       printf 'Errors:\n'
       printf '%s\n' "${issues[@]}"
     else
       printf 'No detailed error was captured.\n'
     fi
-    printf '\nFull log on N5: journalctl -u manual-proxmox-updates.service -n 100 --no-pager\n'
+    printf '\nFull host log: journalctl -u manual-proxmox-updates.service -n 100 --no-pager\n'
   } | timeout 30 "$SENDMAIL_PATH" "${mail_sender_args[@]}" -t -oi
 }
 on_exit() {
@@ -189,6 +187,30 @@ on_exit() {
 trap on_exit EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+log "Updating host $(hostname -s)."
+if ! apt-get -o DPkg::Lock::Timeout=60 update; then
+  die 'Host package index update failed.'
+fi
+if ! env DEBIAN_FRONTEND=noninteractive apt-get \
+    -o DPkg::Lock::Timeout=60 -o Dpkg::Options::=--force-confold upgrade -y; then
+  die 'Host package upgrade failed.'
+fi
+log 'Updated Proxmox host packages.'
+if [[ -e /var/run/reboot-required ]]; then
+  die "Host $(hostname -s) requires a reboot before LXC updates; operator decides when."
+fi
+if ! failed_units=$(systemctl --failed --type=service --no-legend --plain --no-pager); then
+  die 'Could not check failed host services.'
+fi
+if [[ -n $failed_units ]]; then
+  while read -r unit remainder; do
+    [[ -n $unit ]] && log "ERROR: Host has failed service $unit."
+  done <<< "$failed_units"
+  die 'Host service check failed before LXC updates.'
+fi
+systemctl is-active --quiet pveproxy pvedaemon pvestatd || die 'A core Proxmox service is inactive before LXC updates.'
+log 'CHECK host: core Proxmox services active; no failed systemd services.'
 
 failures=0
 for id in "${planned[@]}"; do
@@ -240,4 +262,4 @@ for id in "${planned[@]}"; do
 done
 
 (( failures == 0 )) || die "$failures LXC update(s) failed."
-log 'Manual LXC update run completed successfully.'
+log 'Manual LXC and host update run completed successfully.'
