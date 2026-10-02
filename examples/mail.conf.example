@@ -1,1 +1,4 @@
 MAIL_TO=operator@example.invalid
+# Optional: visible From header and envelope sender.
+MAIL_FROM=error-PVE-N5@mtrolle.com
+MAIL_FROM_NAME="N5 PVE Error"
